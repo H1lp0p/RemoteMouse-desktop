@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/RemoteMouse.App/RemoteMouse.App.csproj" />
+    <Project Path="src/RemoteMouse.Core/RemoteMouse.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/RemoteMouse.Core.Tests/RemoteMouse.Core.Tests.csproj" />
+  </Folder>
+</Solution>

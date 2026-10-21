@@ -1,0 +1,136 @@
+<Window x:Class="RemoteMouse.App.Ui.FlyoutWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:RemoteMouse.App.Ui"
+        Title="Remote Mouse"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        ShowInTaskbar="False"
+        Topmost="True"
+        ResizeMode="NoResize"
+        SizeToContent="Manual"
+        ShowActivated="True"
+        UseLayoutRounding="True"
+        SnapsToDevicePixels="True"
+        TextOptions.TextFormattingMode="Display">
+  <Window.Resources>
+    <Geometry x:Key="PhoneGeometry">M8,2 H16 A2,2 0 0 1 18,4 V20 A2,2 0 0 1 16,22 H8 A2,2 0 0 1 6,20 V4 A2,2 0 0 1 8,2 Z M11,18.5 H13</Geometry>
+    <Geometry x:Key="TrashGeometry">M4,7 H20 M9,7 V4.5 H15 V7 M7,7 L8.2,20 H15.8 L17,7 M10,10.5 V16.5 M14,10.5 V16.5</Geometry>
+  </Window.Resources>
+
+  <Border x:Name="RootCard" Margin="18" Width="360" CornerRadius="8" Background="{StaticResource CardBrush}"
+          BorderBrush="#26FFFFFF" BorderThickness="1" Padding="16,16,16,12">
+    <Border.Effect>
+      <DropShadowEffect BlurRadius="28" ShadowDepth="4" Direction="270" Opacity="0.55" Color="Black"/>
+    </Border.Effect>
+    <ScrollViewer x:Name="ContentScroller" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+    <StackPanel x:Name="ContentPanel">
+      <StackPanel Visibility="{Binding ShowIdle, Converter={StaticResource BoolVis}}">
+        <local:PcNameEditor x:Name="IdleName" Text="{Binding DesktopName}" FontFamily="{StaticResource Kelly}"
+                            FontSize="26" Foreground="White"/>
+        <Button Content="Open connection" Style="{StaticResource PrimaryButton}" Margin="0,14,0,0"
+                Command="{Binding OpenConnectionCommand}"/>
+      </StackPanel>
+
+      <StackPanel Visibility="{Binding ShowPairing, Converter={StaticResource BoolVis}}">
+        <local:PcNameEditor x:Name="PairingName" Text="{Binding DesktopName}" FontFamily="{StaticResource Kelly}"
+                            FontSize="26" Foreground="White" HorizontalAlignment="Center" TextAlignment="Center"/>
+        <Border Background="White" CornerRadius="4" Padding="8" Margin="0,14,0,0" HorizontalAlignment="Center">
+          <Image Source="{Binding QrImage}" Width="232" Height="232"
+                 RenderOptions.BitmapScalingMode="NearestNeighbor" SnapsToDevicePixels="True"/>
+        </Border>
+        <Border Background="{StaticResource CodeBrush}" CornerRadius="6" Height="36" Width="168"
+                Margin="0,12,0,0" HorizontalAlignment="Center">
+          <TextBlock Text="{Binding CodeFormatted}" Foreground="White" FontFamily="Segoe UI"
+                     FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+        <Button Content="Close connection" Style="{StaticResource SecondaryButton}" Margin="0,12,0,0"
+                Command="{Binding CloseConnectionCommand}"/>
+      </StackPanel>
+
+      <Border Visibility="{Binding ShowSession, Converter={StaticResource BoolVis}}"
+              Background="{StaticResource SessionBrush}" CornerRadius="8" Padding="12" Margin="0,0,0,4">
+        <StackPanel>
+          <DockPanel LastChildFill="True">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+              <Border Style="{StaticResource Chip}" Background="{StaticResource SavedBrush}"
+                      Visibility="{Binding ActiveSaved, Converter={StaticResource BoolVis}}">
+                <TextBlock Text="saved" Style="{StaticResource ChipText}"/>
+              </Border>
+              <Border Style="{StaticResource Chip}" Background="{StaticResource AccentBrush}">
+                <TextBlock Text="connected" Style="{StaticResource ChipText}"/>
+              </Border>
+            </StackPanel>
+            <TextBlock Text="{Binding ActiveName}" FontFamily="{StaticResource Kelly}" FontSize="22"
+                       Foreground="White" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+          </DockPanel>
+          <local:PcNameEditor x:Name="SessionName" Text="{Binding DesktopName}" FontFamily="{StaticResource Kelly}"
+                            FontSize="14" Foreground="{StaticResource MutedBrush}" Margin="0,2,0,0"/>
+          <Grid x:Name="SessionActions" Margin="0,12,0,0">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*"/>
+              <ColumnDefinition Width="8"/>
+              <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Button x:Name="CloseSessionButton" Grid.Column="0" Content="Close connection"
+                    Style="{StaticResource SecondaryButton}" Command="{Binding CloseConnectionCommand}"/>
+            <Button x:Name="DisconnectButton" Grid.Column="2" Content="Disconnect"
+                    Style="{StaticResource PrimaryButton}" Command="{Binding DisconnectCommand}"/>
+          </Grid>
+        </StackPanel>
+      </Border>
+
+      <TextBlock Text="Saved devices" FontFamily="{StaticResource Kelly}" FontSize="20"
+                 Foreground="White" Margin="0,16,0,8"/>
+      <TextBlock Text="No saved phones" FontFamily="Segoe UI" FontSize="13"
+                 Foreground="{StaticResource FaintBrush}" Margin="0,0,0,8">
+        <TextBlock.Style>
+          <Style TargetType="TextBlock">
+            <Setter Property="Visibility" Value="Collapsed"/>
+            <Style.Triggers>
+              <DataTrigger Binding="{Binding HasDevices}" Value="False">
+                <Setter Property="Visibility" Value="Visible"/>
+              </DataTrigger>
+            </Style.Triggers>
+          </Style>
+        </TextBlock.Style>
+      </TextBlock>
+
+      <ScrollViewer MaxHeight="280" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <ItemsControl ItemsSource="{Binding Devices}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <Grid Height="44" Margin="0,1">
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="34"/>
+                  <ColumnDefinition Width="*"/>
+                  <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <Path Grid.Column="0" Data="{StaticResource PhoneGeometry}" Stroke="White" StrokeThickness="1.4"
+                      Width="16" Height="22" Stretch="Uniform" HorizontalAlignment="Left" VerticalAlignment="Center"
+                      StrokeLineJoin="Round"/>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="4,0,8,0">
+                  <TextBlock Text="{Binding Name}" FontFamily="{StaticResource Kelly}" FontSize="18"
+                             Foreground="White" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                  <Border Style="{StaticResource Chip}" Background="{StaticResource AccentBrush}"
+                          Visibility="{Binding IsConnected, Converter={StaticResource BoolVis}}">
+                    <TextBlock Text="connected" Style="{StaticResource ChipText}"/>
+                  </Border>
+                </StackPanel>
+                <Button Grid.Column="2" Style="{StaticResource IconButton}"
+                        Visibility="{Binding ShowForget, Converter={StaticResource BoolVis}}"
+                        Command="{Binding DataContext.ForgetCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                        CommandParameter="{Binding ClientId}" ToolTip="Remove">
+                  <Path Data="{StaticResource TrashGeometry}" Stroke="{StaticResource AccentBrush}" StrokeThickness="1.4"
+                        Width="16" Height="16" Stretch="Uniform" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+                </Button>
+              </Grid>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </ScrollViewer>
+    </StackPanel>
+    </ScrollViewer>
+  </Border>
+</Window>

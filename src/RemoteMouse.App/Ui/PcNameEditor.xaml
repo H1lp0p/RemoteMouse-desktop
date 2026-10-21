@@ -1,0 +1,27 @@
+<UserControl x:Class="RemoteMouse.App.Ui.PcNameEditor"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Name="Root"
+             Cursor="Hand"
+             ToolTip="Double-click to rename">
+  <Grid>
+    <TextBlock x:Name="Display"
+               Text="{Binding Text, ElementName=Root}"
+               TextAlignment="{Binding TextAlignment, ElementName=Root}"
+               TextTrimming="CharacterEllipsis"
+               MouseLeftButtonDown="OnDisplayClick"/>
+    <TextBox x:Name="Editor"
+             Visibility="Collapsed"
+             MinWidth="140"
+             Padding="0"
+             BorderThickness="0"
+             Background="#22FFFFFF"
+             Foreground="{Binding Foreground, ElementName=Root}"
+             CaretBrush="White"
+             TextAlignment="{Binding TextAlignment, ElementName=Root}"
+             FontFamily="{Binding FontFamily, ElementName=Root}"
+             FontSize="{Binding FontSize, ElementName=Root}"
+             KeyDown="OnEditorKey"
+             LostKeyboardFocus="OnEditorLostFocus"/>
+  </Grid>
+</UserControl>
