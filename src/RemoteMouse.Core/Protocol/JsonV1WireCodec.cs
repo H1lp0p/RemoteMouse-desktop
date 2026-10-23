@@ -40,8 +40,12 @@ public sealed class JsonV1WireCodec : IWireCodec
                 "mouse_move" => new ClientAction.MouseMove(ReadInt(root, "dx"), ReadInt(root, "dy")),
                 "mouse_click" => new ClientAction.MouseClick(
                     ReadString(root, "button") ?? "left",
-                    ReadString(root, "action") ?? "click"),
-                "mouse_scroll" => new ClientAction.MouseScroll(ReadInt(root, "delta_x"), ReadInt(root, "delta_y")),
+                    ReadString(root, "action") ?? "click",
+                    ReadUInt32(root, "input_time")),
+                "mouse_scroll" => new ClientAction.MouseScroll(
+                    ReadInt(root, "delta_x"),
+                    ReadInt(root, "delta_y"),
+                    ReadUInt32(root, "input_time")),
                 "key_sequence" => new ClientAction.KeySequence(ReadIntList(root, "keys")),
                 "text_subscribe" => new ClientAction.TextSubscribe(),
                 "text_unsubscribe" => new ClientAction.TextUnsubscribe(),
@@ -140,6 +144,17 @@ public sealed class JsonV1WireCodec : IWireCodec
             if (el.TryGetDouble(out var asDouble)) return (long)asDouble;
         }
         if (el.ValueKind == JsonValueKind.String && long.TryParse(el.GetString(), out var parsed))
+            return parsed;
+        return null;
+    }
+
+    private static uint? ReadUInt32(JsonElement root, string name)
+    {
+        if (!root.TryGetProperty(name, out var el) || el.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+            return null;
+        if (el.ValueKind == JsonValueKind.Number && el.TryGetUInt32(out var number))
+            return number;
+        if (el.ValueKind == JsonValueKind.String && uint.TryParse(el.GetString(), out var parsed))
             return parsed;
         return null;
     }

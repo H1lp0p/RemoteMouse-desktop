@@ -5,7 +5,9 @@ namespace RemoteMouse.Core.Pairing;
 public sealed record PairedPeer(
     string ClientId,
     string ClientName,
-    IReadOnlyDictionary<string, string?> Fingerprint);
+    IReadOnlyDictionary<string, string?> Fingerprint,
+    int ProtocolVersion = 1,
+    ushort SessionId = 0);
 
 public abstract record PairDecision
 {
@@ -15,16 +17,21 @@ public abstract record PairDecision
 
 /// <summary>
 /// POST /pair rules from the REST spec. Rate limit is 5 failures / 30s per IP + fingerprint.
+/// An unsupported protocol_version is not a bad code and does not consume that limit.
+/// Missing protocol_version is v1.
 /// </summary>
 public sealed class PairingService
 {
     public const int MaxFailedAttempts = 5;
     public const int WindowMs = 30_000;
+    public const int ProtocolV1 = 1;
+    public const int ProtocolV2 = 2;
 
     private readonly object _gate = new();
     private readonly Dictionary<string, List<long>> _failures = new();
     private readonly Dictionary<string, PairedPeer> _pairedByIp = new();
     private readonly Func<long> _clock;
+    private ushort _nextSessionId = 1;
 
     public bool IsEnabled { get; set; }
     public string VerificationCode { get; set; } = "000000";
@@ -55,6 +62,9 @@ public sealed class PairingService
 
         lock (_gate)
         {
+            if (!TryReadProtocolVersion(body, out var protocolVersion))
+                return Fail(400, "unsupported_protocol", "Unsupported protocol_version");
+
             if (!IsEnabled && mode == "new")
                 return Fail(403, "pairing_disabled", "New connections are blocked");
 
@@ -73,9 +83,7 @@ public sealed class PairingService
                     return Fail(401, "invalid_code", "Invalid verification code");
                 }
 
-                var peer = new PairedPeer(clientId ?? "", clientName, fingerprint);
-                _pairedByIp[peerIp] = peer;
-                return new PairDecision.Success(peer);
+                return new PairDecision.Success(Remember(peerIp, clientId ?? "", clientName, fingerprint, protocolVersion));
             }
 
             if (mode == "saved")
@@ -83,9 +91,7 @@ public sealed class PairingService
                 if (string.IsNullOrWhiteSpace(clientId) || !isTrusted(clientId))
                     return Fail(401, "device_not_trusted", "This client_id is not in the trusted devices list");
 
-                var peer = new PairedPeer(clientId, clientName, fingerprint);
-                _pairedByIp[peerIp] = peer;
-                return new PairDecision.Success(peer);
+                return new PairDecision.Success(Remember(peerIp, clientId, clientName, fingerprint, protocolVersion));
             }
 
             return Fail(400, "bad_request", $"Unknown pairing_mode: {mode}");
@@ -117,6 +123,41 @@ public sealed class PairingService
             _failures[key] = stamps;
         }
         stamps.Add(_clock());
+    }
+
+    private PairedPeer Remember(string peerIp, string clientId, string clientName, IReadOnlyDictionary<string, string?> fingerprint, int protocolVersion)
+    {
+        var sessionId = protocolVersion >= ProtocolV2 ? AllocateSessionId() : (ushort)0;
+        var peer = new PairedPeer(clientId, clientName, fingerprint, protocolVersion, sessionId);
+        _pairedByIp[peerIp] = peer;
+        return peer;
+    }
+
+    private ushort AllocateSessionId()
+    {
+        var id = _nextSessionId;
+        _nextSessionId++;
+        if (_nextSessionId == 0) _nextSessionId = 1;
+        return id;
+    }
+
+    private static bool TryReadProtocolVersion(JsonElement body, out int version)
+    {
+        version = ProtocolV1;
+        if (!body.TryGetProperty("protocol_version", out var el) || el.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+            return true;
+        if (el.ValueKind == JsonValueKind.Number && el.TryGetInt32(out var number))
+        {
+            version = number;
+            return number is ProtocolV1 or ProtocolV2;
+        }
+        if (el.ValueKind == JsonValueKind.String
+            && int.TryParse(el.GetString(), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var parsed))
+        {
+            version = parsed;
+            return parsed is ProtocolV1 or ProtocolV2;
+        }
+        return false;
     }
 
     private static PairDecision Fail(int status, string error, string message, int? retryAfter = null)

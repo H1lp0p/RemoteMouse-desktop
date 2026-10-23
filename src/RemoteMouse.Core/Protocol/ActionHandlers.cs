@@ -24,6 +24,9 @@ public sealed class MouseMoveHandler : ActionHandler<ClientAction.MouseMove>
 {
     protected override Task HandleAsync(ISessionContext context, ClientAction.MouseMove action, CancellationToken cancellationToken)
     {
+        // v2 motion is the UDP playhead. v1 still applies the JSON deltas here.
+        if (context.ProtocolVersion >= 2)
+            return Task.CompletedTask;
         // dx/dy are already pixels. Sensitivity lives on the phone.
         context.Mouse.Move(action.Dx, action.Dy);
         return Task.CompletedTask;
@@ -34,7 +37,10 @@ public sealed class MouseClickHandler : ActionHandler<ClientAction.MouseClick>
 {
     protected override Task HandleAsync(ISessionContext context, ClientAction.MouseClick action, CancellationToken cancellationToken)
     {
-        context.Mouse.Button(action.Button, action.ActionName);
+        void Click() => context.Mouse.Button(action.Button, action.ActionName);
+        if (action.InputTime is uint inputTime && context.ProtocolVersion >= 2)
+            return context.SyncPointerAsync(inputTime, Click, cancellationToken);
+        Click();
         return Task.CompletedTask;
     }
 }
@@ -43,6 +49,8 @@ public sealed class MouseScrollHandler : ActionHandler<ClientAction.MouseScroll>
 {
     protected override Task HandleAsync(ISessionContext context, ClientAction.MouseScroll action, CancellationToken cancellationToken)
     {
+        // Scroll stays on WebSocket so a notch is not lost, but it must not wait on the
+        // mouse playhead. A gesture is many messages; a 30 ms fence on each one stacks.
         context.Mouse.Scroll(action.DeltaX, action.DeltaY);
         return Task.CompletedTask;
     }
@@ -88,6 +96,9 @@ public sealed class VolumeSetHandler : ActionHandler<ClientAction.VolumeSet>
 {
     protected override Task HandleAsync(ISessionContext context, ClientAction.VolumeSet action, CancellationToken cancellationToken)
     {
+        // v2 slider is a UDP absolute level. Mute and volume_step stay on this socket.
+        if (context.ProtocolVersion >= 2)
+            return Task.CompletedTask;
         var state = context.Volume.SetLevel(action.Level);
         return Publish(context, state, cancellationToken);
     }

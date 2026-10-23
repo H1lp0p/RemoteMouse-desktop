@@ -4,6 +4,7 @@ using System.Net.WebSockets;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using RemoteMouse.Core.Input;
 using RemoteMouse.Core.Pairing;
 using RemoteMouse.Core.Protocol;
 using RemoteMouse.Core.State;
@@ -26,6 +27,7 @@ public sealed record UiSnapshot(
 public sealed class RemoteMouseServer : IAsyncDisposable
 {
     public const int Port = 12345;
+    public const int RealtimePort = 12346;
     public const int MaxClients = 5;
     public const string Version = "1.0.0";
 
@@ -46,6 +48,7 @@ public sealed class RemoteMouseServer : IAsyncDisposable
 
     private WebApplication? _app;
     private UdpClient? _udp;
+    private UdpClient? _realtime;
     private string? _activeId;
     private string? _qrPayload;
     private readonly DateTime _started = DateTime.UtcNow;
@@ -118,6 +121,18 @@ public sealed class RemoteMouseServer : IAsyncDisposable
         {
             _log.Write("UDP discovery failed: " + ex.Message);
         }
+
+        try
+        {
+            StartRealtimeUdp();
+            _log.Write($"UDP realtime on {RealtimePort}");
+        }
+        catch (Exception ex)
+        {
+            _log.Write("UDP realtime failed: " + ex.Message);
+        }
+
+        _ = Task.Run(PlayheadLoop);
     }
 
     public void Rename(string name)
@@ -239,6 +254,7 @@ public sealed class RemoteMouseServer : IAsyncDisposable
             }
         }
         _udp?.Dispose();
+        _realtime?.Dispose();
         if (_app is not null)
             await _app.StopAsync(CancellationToken.None);
     }
@@ -297,7 +313,20 @@ public sealed class RemoteMouseServer : IAsyncDisposable
             }
 
             var success = (PairDecision.Success)decision;
-            _log.Write($"PAIR {ip} ok {success.Peer.ClientId} {success.Peer.ClientName}");
+            _log.Write($"PAIR {ip} ok {success.Peer.ClientId} {success.Peer.ClientName} v{success.Peer.ProtocolVersion}");
+            if (success.Peer.ProtocolVersion >= PairingService.ProtocolV2)
+            {
+                await WriteJson(context, 200, new
+                {
+                    paired = true,
+                    server_info = new { name = _store.DeviceName, version = Version },
+                    protocol_version = success.Peer.ProtocolVersion,
+                    session_id = success.Peer.SessionId,
+                    udp_port = RealtimePort
+                });
+                return;
+            }
+
             await WriteJson(context, 200, new
             {
                 paired = true,
@@ -317,12 +346,15 @@ public sealed class RemoteMouseServer : IAsyncDisposable
         var socket = await context.WebSockets.AcceptWebSocketAsync();
         var ip = PeerAddress(context.Connection.RemoteIpAddress);
         var paired = _pairing.LastPaired(ip);
+        var protocolVersion = paired is { ProtocolVersion: >= PairingService.ProtocolV2 } ? paired.ProtocolVersion : 1;
         var session = new ClientConnection(this, socket, ip)
         {
             Codec = _codecs.OutboundDefault,
             ClientId = string.IsNullOrWhiteSpace(paired?.ClientId) ? null : paired!.ClientId,
             ClientName = string.IsNullOrWhiteSpace(paired?.ClientName) ? "Android" : paired!.ClientName,
-            Fingerprint = paired?.Fingerprint.ToDictionary(p => p.Key, p => p.Value) ?? new Dictionary<string, string?>()
+            Fingerprint = paired?.Fingerprint.ToDictionary(p => p.Key, p => p.Value) ?? new Dictionary<string, string?>(),
+            ProtocolVersion = protocolVersion,
+            ProtocolSessionId = protocolVersion >= PairingService.ProtocolV2 ? paired!.SessionId : (ushort)0
         };
 
         var accepted = false;
@@ -340,7 +372,7 @@ public sealed class RemoteMouseServer : IAsyncDisposable
             await RejectFull(socket);
             return;
         }
-        _log.Write($"WS connect {ip} client={session.ClientId ?? "-"}");
+        _log.Write($"WS connect {ip} client={session.ClientId ?? "-"} proto={session.ProtocolVersion}");
         Notify();
 
         try
@@ -373,8 +405,8 @@ public sealed class RemoteMouseServer : IAsyncDisposable
 
     private async Task OnConnectedAsync(ClientConnection session, CancellationToken cancellationToken)
     {
-        // Current phones expect a JSON volume_update before they send anything.
-        // A future handshake dialect should move this push to after the version is agreed.
+        // Phones expect a JSON volume_update before they send anything.
+        // v2 keeps that push; the slider itself then arrives on UDP.
         var state = _volume.Get();
         await session.PublishAsync(new ServerEvent.VolumeUpdate(state.Level, state.Muted), Audience.Self, cancellationToken);
     }
@@ -516,6 +548,172 @@ public sealed class RemoteMouseServer : IAsyncDisposable
             }
         }
     }
+
+    private void StartRealtimeUdp()
+    {
+        var client = new UdpClient(AddressFamily.InterNetwork);
+        client.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+        client.Client.Bind(new IPEndPoint(IPAddress.Any, RealtimePort));
+        _realtime = client;
+        _ = Task.Run(RealtimeLoop);
+    }
+
+    private async Task RealtimeLoop()
+    {
+        var udp = _realtime;
+        if (udp is null) return;
+        while (!_stopping.IsCancellationRequested)
+        {
+            UdpReceiveResult datagram;
+            try
+            {
+                datagram = await udp.ReceiveAsync(_stopping.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            catch (ObjectDisposedException)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                _log.Write("UDP realtime recv: " + ex.Message);
+                continue;
+            }
+
+            if (!V2UdpFrame.TryParse(datagram.Buffer, out var frame) || frame is null)
+                continue;
+            var session = FindV2Session(frame.SessionId, PeerAddress(datagram.RemoteEndPoint.Address));
+            if (session is null) continue;
+            ApplyRealtime(session, frame);
+        }
+    }
+
+    private async Task PlayheadLoop()
+    {
+        while (!_stopping.IsCancellationRequested)
+        {
+            List<ClientConnection> sessions;
+            lock (_gate) sessions = _sessions.Where(s => s.ProtocolVersion >= PairingService.ProtocolV2).ToList();
+            var now = Environment.TickCount64;
+            foreach (var session in sessions)
+            {
+                try
+                {
+                    session.Timeline.Pump(now, ApplyImmediateStep);
+                }
+                catch (Exception ex)
+                {
+                    _log.Write("playhead: " + ex.Message);
+                }
+            }
+
+            try
+            {
+                await Task.Delay(2, _stopping.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+        }
+    }
+
+    private ClientConnection? FindV2Session(ushort sessionId, string ip)
+    {
+        lock (_gate)
+        {
+            ClientConnection? found = null;
+            foreach (var session in _sessions)
+            {
+                if (V2Session.AcceptsDatagram(sessionId, ip, session.ProtocolSessionId, session.PeerIp, session.ProtocolVersion))
+                    found = session;
+            }
+            return found;
+        }
+    }
+
+    private void ApplyRealtime(ClientConnection session, V2UdpFrame frame)
+    {
+        var now = Environment.TickCount64;
+        switch (frame)
+        {
+            case V2UdpFrame.MouseMove move:
+                session.Timeline.AddSample(move.Timestamp, move.Dx, move.Dy, now, ApplyImmediateStep);
+                break;
+            case V2UdpFrame.Volume volume when session.VolumeGate.TryAccept(volume.Timestamp, out var volumeGeneration):
+                ApplyVolumeLater(session, volumeGeneration, Math.Clamp((int)volume.Level, 0, 100));
+                break;
+            case V2UdpFrame.Seek seek when session.SeekGate.TryAccept(seek.Timestamp, out var seekGeneration):
+                ApplySeekLater(session, seekGeneration, seek.PositionSeconds);
+                break;
+        }
+    }
+
+    private void ApplyVolumeLater(ClientConnection session, int generation, int level)
+    {
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                VolumeState state;
+                lock (session.VolumeApply)
+                {
+                    if (!session.VolumeGate.IsGeneration(generation)) return;
+                    state = _volume.SetLevel(level);
+                    if (!session.VolumeGate.IsGeneration(generation)) return;
+                    session.PublishAsync(new ServerEvent.VolumeUpdate(state.Level, state.Muted), Audience.Everyone, CancellationToken.None)
+                        .GetAwaiter().GetResult();
+                }
+            }
+            catch (Exception ex)
+            {
+                _log.Write("udp volume: " + ex.Message);
+            }
+        });
+    }
+
+    private void ApplySeekLater(ClientConnection session, int generation, int positionSeconds)
+    {
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                MediaSnapshot snap;
+                lock (session.SeekApply)
+                {
+                    if (!session.SeekGate.IsGeneration(generation)) return;
+                    snap = _media.SeekAbsolute(positionSeconds);
+                    if (!session.SeekGate.IsGeneration(generation)) return;
+                    session.PublishAsync(MediaEvent(snap), Audience.MediaSubscribers, CancellationToken.None)
+                        .GetAwaiter().GetResult();
+                }
+            }
+            catch (Exception ex)
+            {
+                _log.Write("udp seek: " + ex.Message);
+            }
+        });
+    }
+
+    private void ApplyImmediateStep(int dx, int dy)
+    {
+        if (dx == 0 && dy == 0) return;
+        if (_mouse is InterpolatingMouse smooth)
+            smooth.MoveImmediate(dx, dy);
+        else
+            _mouse.Move(dx, dy);
+    }
+
+    private static ServerEvent.MediaUpdate MediaEvent(MediaSnapshot snap) => new(
+        snap.Title,
+        snap.Artist,
+        snap.PositionSeconds,
+        snap.DurationSeconds,
+        snap.IsPlaying,
+        snap.CanSeek);
 
     private void Trust(ClientConnection session, string? requestedName)
     {
@@ -698,6 +896,13 @@ public sealed class RemoteMouseServer : IAsyncDisposable
         public WebSocket Socket { get; }
         public string SessionId { get; }
         public string PeerIp { get; }
+        public int ProtocolVersion { get; init; } = 1;
+        public ushort ProtocolSessionId { get; init; }
+        public MouseTimeline Timeline { get; } = new();
+        public TimestampGate VolumeGate { get; } = new();
+        public TimestampGate SeekGate { get; } = new();
+        public object VolumeApply { get; } = new();
+        public object SeekApply { get; } = new();
         public string? ClientId { get; set; }
         public string ClientName { get; set; } = "Android";
         public Dictionary<string, string?> Fingerprint { get; set; } = new();
@@ -713,6 +918,9 @@ public sealed class RemoteMouseServer : IAsyncDisposable
         public IVolumeController Volume => _server._volume;
         public IMediaController Media => _server._media;
         public ITextController Text => _server._text;
+
+        public Task SyncPointerAsync(uint inputTime, Action command, CancellationToken cancellationToken)
+            => Timeline.AwaitClickAsync(inputTime, () => Environment.TickCount64, _server.ApplyImmediateStep, command, cancellationToken);
 
         public void Trust(string? clientName) => _server.Trust(this, clientName);
         public void Log(string message) => _server._log.Write(message);

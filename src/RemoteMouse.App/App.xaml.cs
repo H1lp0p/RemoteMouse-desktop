@@ -1,5 +1,3 @@
-using System.Drawing;
-using System.Drawing.Drawing2D;
 using System.Windows;
 using RemoteMouse.App.Hosting;
 using RemoteMouse.App.Desktop;
@@ -61,7 +59,7 @@ public partial class App : Application
 
         _tray = new WinForms.NotifyIcon
         {
-            Icon = CreateIcon(),
+            Icon = TrayIcon.Create(),
             Visible = true,
             Text = "Remote Mouse"
         };
@@ -128,32 +126,4 @@ public partial class App : Application
         _flyout.ShowAnchored();
     }
 
-    private static Icon CreateIcon()
-    {
-        using var bmp = new Bitmap(32, 32, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-        using (var g = Graphics.FromImage(bmp))
-        {
-            g.SmoothingMode = SmoothingMode.AntiAlias;
-            g.Clear(Color.Transparent);
-            using var pen = new Pen(Color.FromArgb(255, 96, 205, 255), 2.2f);
-            g.DrawEllipse(pen, 9, 2, 14, 18);
-            g.DrawLine(pen, 16, 19, 16, 27);
-            g.DrawLine(pen, 11, 27, 21, 27);
-            using var brush = new SolidBrush(Color.FromArgb(255, 96, 205, 255));
-            g.FillEllipse(brush, 14, 8, 4, 4);
-        }
-        var handle = bmp.GetHicon();
-        try
-        {
-            using var temp = Icon.FromHandle(handle);
-            return (Icon)temp.Clone();
-        }
-        finally
-        {
-            DestroyIcon(handle);
-        }
-    }
-
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    private static extern bool DestroyIcon(IntPtr handle);
 }

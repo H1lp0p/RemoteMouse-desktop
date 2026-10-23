@@ -302,9 +302,11 @@ sealed class Proto2Codec : IWireCodec
 sealed class RecordingMouse : IMouseController
 {
     public List<(int Dx, int Dy)> Moves { get; } = new();
+    public List<(string Button, string Action)> Clicks { get; } = new();
+    public List<(int X, int Y)> Scrolls { get; } = new();
     public void Move(int dx, int dy) => Moves.Add((dx, dy));
-    public void Button(string button, string action) { }
-    public void Scroll(int deltaX, int deltaY) { }
+    public void Button(string button, string action) => Clicks.Add((button, action));
+    public void Scroll(int deltaX, int deltaY) => Scrolls.Add((deltaX, deltaY));
 }
 
 sealed class FakeSession : ISessionContext
@@ -319,6 +321,14 @@ sealed class FakeSession : ISessionContext
     public IVolumeController Volume { get; set; } = new MemoryVolumeController();
     public IMediaController Media { get; set; } = new MemoryMediaController();
     public ITextController Text { get; set; } = new MemoryTextController();
+    public int ProtocolVersion { get; set; } = 1;
+    public bool PointerSynced { get; private set; }
+    public Task SyncPointerAsync(uint inputTime, Action command, CancellationToken cancellationToken)
+    {
+        PointerSynced = true;
+        command();
+        return Task.CompletedTask;
+    }
     public void Trust(string? clientName) { }
     public void Log(string message) { }
     public Task PublishAsync(ServerEvent evt, Audience audience, CancellationToken cancellationToken)

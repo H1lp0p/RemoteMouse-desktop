@@ -125,6 +125,20 @@ public sealed class SmtcMediaController : IMediaController, IDisposable
         });
     }
 
+    public MediaSnapshot SeekAbsolute(int positionSeconds)
+    {
+        Quiet();
+        return Run(async () =>
+        {
+            var session = await SessionAsync();
+            MediaSnapshot? sought = null;
+            if (session is not null)
+                sought = await TrySeekAbsoluteAsync(session, positionSeconds);
+            var read = await ReadAsync();
+            return sought is MediaSnapshot target ? read with { PositionSeconds = target.PositionSeconds, DurationSeconds = target.DurationSeconds } : read;
+        });
+    }
+
     private const ushort VkMediaNext = 0xB0;
     private const ushort VkMediaPrevious = 0xB1;
     private const ushort VkMediaPlayPause = 0xB3;
@@ -156,6 +170,18 @@ public sealed class SmtcMediaController : IMediaController, IDisposable
         Quiet(800);
         var read = _last;
         return (true, read with { PositionSeconds = targetSeconds, DurationSeconds = place.DurationSeconds > 0 ? place.DurationSeconds : read.DurationSeconds });
+    }
+
+    private async Task<MediaSnapshot?> TrySeekAbsoluteAsync(GlobalSystemMediaTransportControlsSession session, int positionSeconds)
+    {
+        var timeline = session.GetTimelineProperties();
+        var place = MediaTimeline.Describe(timeline.StartTime, timeline.EndTime, timeline.Position, PlayingAhead(session, timeline));
+        var targetSeconds = MediaTimeline.AbsoluteTargetSeconds(place, positionSeconds);
+        var accepted = await session.TryChangePlaybackPositionAsync(MediaTimeline.AbsolutePositionTicks(place, positionSeconds));
+        if (!accepted) return null;
+        Quiet(800);
+        var read = _last;
+        return read with { PositionSeconds = targetSeconds, DurationSeconds = place.DurationSeconds > 0 ? place.DurationSeconds : read.DurationSeconds };
     }
 
     public void Dispose()

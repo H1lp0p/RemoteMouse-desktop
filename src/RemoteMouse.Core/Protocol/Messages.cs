@@ -8,8 +8,12 @@ public abstract record ClientAction
     public sealed record Heartbeat(long? Timestamp) : ClientAction;
     public sealed record Save(string? ClientName) : ClientAction;
     public sealed record MouseMove(int Dx, int Dy) : ClientAction;
-    public sealed record MouseClick(string Button, string ActionName) : ClientAction;
-    public sealed record MouseScroll(int DeltaX, int DeltaY) : ClientAction;
+
+    /// <summary><paramref name="InputTime"/> is the phone clock. Null means v1: run immediately.</summary>
+    public sealed record MouseClick(string Button, string ActionName, uint? InputTime = null) : ClientAction;
+
+    /// <summary><paramref name="InputTime"/> is the phone clock. Null means v1: run immediately.</summary>
+    public sealed record MouseScroll(int DeltaX, int DeltaY, uint? InputTime = null) : ClientAction;
     public sealed record KeySequence(IReadOnlyList<int> Keys) : ClientAction;
     public sealed record TextSubscribe() : ClientAction;
     public sealed record TextUnsubscribe() : ClientAction;

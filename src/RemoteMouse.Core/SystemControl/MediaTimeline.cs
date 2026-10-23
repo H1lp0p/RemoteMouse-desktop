@@ -58,6 +58,26 @@ public static class MediaTimeline
         return absolute.Ticks;
     }
 
+    /// <summary>Absolute position on the same scale as <see cref="Placement.PositionSeconds"/>.</summary>
+    public static int AbsoluteTargetSeconds(Placement current, int positionSeconds)
+    {
+        var target = positionSeconds;
+        if (target < 0) target = 0;
+        if (current.DurationSeconds > 5 && target >= current.DurationSeconds)
+            target = current.DurationSeconds - 1;
+        else if (current.DurationSeconds > 0 && target > current.DurationSeconds)
+            target = current.DurationSeconds;
+        return target;
+    }
+
+    public static long AbsolutePositionTicks(Placement current, int positionSeconds)
+    {
+        var target = AbsoluteTargetSeconds(current, positionSeconds);
+        var absolute = current.Origin + TimeSpan.FromSeconds(target);
+        if (absolute < TimeSpan.Zero) absolute = TimeSpan.Zero;
+        return absolute.Ticks;
+    }
+
     private static bool Plausible(TimeSpan value)
         => value > TimeSpan.Zero && value < TimeSpan.FromHours(8);
 

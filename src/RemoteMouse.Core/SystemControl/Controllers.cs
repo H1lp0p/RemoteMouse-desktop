@@ -40,6 +40,9 @@ public interface IMediaController
     MediaSnapshot Next();
     MediaSnapshot Previous();
     MediaSnapshot Seek(int seconds);
+
+    /// <summary>Absolute position in the same seconds the phone shows. Not a relative skip.</summary>
+    MediaSnapshot SeekAbsolute(int positionSeconds);
 }
 
 public interface ITextController
@@ -152,6 +155,16 @@ public sealed class MemoryMediaController : IMediaController
         lock (_gate)
         {
             Commit(EffectiveLocked() + seconds, null);
+            return Snapshot(EffectiveLocked());
+        }
+    }
+
+    public MediaSnapshot SeekAbsolute(int positionSeconds)
+    {
+        lock (_gate)
+        {
+            var place = new MediaTimeline.Placement(0, _duration, TimeSpan.Zero);
+            Commit(MediaTimeline.AbsoluteTargetSeconds(place, positionSeconds), null);
             return Snapshot(EffectiveLocked());
         }
     }

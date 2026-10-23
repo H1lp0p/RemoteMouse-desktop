@@ -32,6 +32,18 @@ public class MediaTimelineTests
     }
 
     [Fact]
+    public void AbsolutePosition_UsesTheSameOriginAndStopsBeforeTheEnd()
+    {
+        var place = MediaTimeline.Describe(TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(190), TimeSpan.FromSeconds(40), null);
+        Assert.Equal(40, MediaTimeline.AbsoluteTargetSeconds(place, 40));
+        Assert.Equal(TimeSpan.FromSeconds(50).Ticks, MediaTimeline.AbsolutePositionTicks(place, 40));
+
+        var ending = MediaTimeline.Describe(TimeSpan.Zero, TimeSpan.FromSeconds(180), TimeSpan.FromSeconds(20), null);
+        Assert.Equal(179, MediaTimeline.AbsoluteTargetSeconds(ending, 180));
+        Assert.Equal(TimeSpan.FromSeconds(179).Ticks, MediaTimeline.AbsolutePositionTicks(ending, 400));
+    }
+
+    [Fact]
     public void AbsurdDuration_DoesNotBecomeTheSliderRange()
     {
         var place = MediaTimeline.Describe(TimeSpan.Zero, TimeSpan.FromDays(400), TimeSpan.FromSeconds(20), null);

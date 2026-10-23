@@ -34,6 +34,9 @@ public sealed class InterpolatingMouse : SystemControl.IMouseController, IDispos
         _wake.Set();
     }
 
+    /// <summary>v2 playhead output. Does not enter <see cref="CursorInterpolator"/>.</summary>
+    public void MoveImmediate(int dx, int dy) => _sink.Move(dx, dy);
+
     public void Button(string button, string action)
     {
         Flush();

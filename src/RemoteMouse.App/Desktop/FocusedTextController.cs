@@ -108,9 +108,17 @@ public sealed class FocusedTextController : ITextController, IDisposable
         if (ForegroundIsOurs()) return;
         // Edit/RichEdit applies WM_SETTEXT immediately. UIA SetValue on the same control
         // often reports the previous value and then fights the next write.
-        if (TryWin32Set(text)) return;
+        if (TryWin32Set(text))
+        {
+            MoveWin32CaretToEnd();
+            return;
+        }
         var element = FocusedElement();
-        if (element is not null && !IsOurElement(element) && TryValueSet(element, text)) return;
+        if (element is not null && !IsOurElement(element) && TryValueSet(element, text))
+        {
+            MoveCaretToEnd();
+            return;
+        }
         PasteReplacement(text);
     }
 
@@ -367,6 +375,8 @@ public sealed class FocusedTextController : ITextController, IDisposable
         _keys.Chord(new[] { 0x11, 0x41 });
         Thread.Sleep(60);
         _keys.Chord(new[] { 0x11, 0x56 });
+        Thread.Sleep(40);
+        _keys.Chord(new[] { VkEnd });
         _ = Task.Run(async () =>
         {
             await Task.Delay(500);
@@ -409,6 +419,20 @@ public sealed class FocusedTextController : ITextController, IDisposable
         if (hwnd == IntPtr.Zero || ours || !IsEditClass(hwnd)) return false;
         SendMessage(hwnd, WmSetText, IntPtr.Zero, text);
         return true;
+    }
+
+    /// <summary>WM_SETTEXT leaves the caret where it was. Put it after the text we just wrote.</summary>
+    private static void MoveWin32CaretToEnd()
+    {
+        var hwnd = FocusedHwnd(out var ours);
+        if (hwnd == IntPtr.Zero || ours || !IsEditClass(hwnd)) return;
+        var length = SendMessage(hwnd, WmGetTextLength, IntPtr.Zero, IntPtr.Zero);
+        SendMessage(hwnd, EmSetSel, length, length);
+    }
+
+    private void MoveCaretToEnd()
+    {
+        _keys.Chord(new[] { VkEnd });
     }
 
     private static bool ForegroundIsOurs()
@@ -469,6 +493,8 @@ public sealed class FocusedTextController : ITextController, IDisposable
     private const int WmGetText = 0x000D;
     private const int WmGetTextLength = 0x000E;
     private const int WmSetText = 0x000C;
+    private const int EmSetSel = 0x00B1;
+    private const int VkEnd = 0x23;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct GuiThreadInfo
