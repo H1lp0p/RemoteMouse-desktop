@@ -16,6 +16,7 @@ public sealed class SmtcMediaController : IMediaController, IDisposable
     private MediaSnapshot _last = Empty;
     private long _quietUntil;
     private int _started;
+    private int _disposed;
 
     public SmtcMediaController(Action<string> log) => _log = log;
 
@@ -51,6 +52,7 @@ public sealed class SmtcMediaController : IMediaController, IDisposable
         Quiet();
         return Run(async () =>
         {
+            var before = _last;
             var session = await SessionAsync();
             var accepted = false;
             if (session is not null)
@@ -68,7 +70,7 @@ public sealed class SmtcMediaController : IMediaController, IDisposable
             {
                 await Task.Delay(80);
             }
-            return await ReadAsync();
+            return await ReadAfterTrackChange(before);
         });
     }
 
@@ -77,6 +79,7 @@ public sealed class SmtcMediaController : IMediaController, IDisposable
         Quiet();
         return Run(async () =>
         {
+            var before = _last;
             var session = await SessionAsync();
             var accepted = false;
             if (session is not null)
@@ -94,7 +97,7 @@ public sealed class SmtcMediaController : IMediaController, IDisposable
             {
                 await Task.Delay(80);
             }
-            return await ReadAsync();
+            return await ReadAfterTrackChange(before);
         });
     }
 
@@ -186,19 +189,63 @@ public sealed class SmtcMediaController : IMediaController, IDisposable
 
     public void Dispose()
     {
-        lock (_gate)
+        if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
+        // Unhook off the UI thread, then stay alive briefly so Windows can drop the
+        // SMTC listener while this process still exists. Exiting with it attached crashes Chrome.
+        Task.Run(() =>
+        {
+            lock (_gate)
+                ReleaseSession();
+        }).GetAwaiter().GetResult();
+        Thread.Sleep(200);
+    }
+
+    private void ReleaseSession()
+    {
+        try
         {
             Unhook(_session);
-            _session = null;
-            if (_manager is not null)
-                _manager.CurrentSessionChanged -= OnSessionChanged;
-            _manager = null;
         }
+        catch (Exception ex)
+        {
+            _log("media unhook: " + ex.Message);
+        }
+        _session = null;
+        if (_manager is null) return;
+        try
+        {
+            _manager.CurrentSessionChanged -= OnSessionChanged;
+        }
+        catch (Exception ex)
+        {
+            _log("media unhook: " + ex.Message);
+        }
+        _manager = null;
     }
 
     private static MediaSnapshot Empty => new(null, null, 0, 0, false, false);
 
     private void Quiet(int milliseconds = 350) => _quietUntil = Environment.TickCount64 + milliseconds;
+
+    /// <summary>
+    /// SMTC often reports the previous title for a few hundred milliseconds after a skip.
+    /// Wait until the title or artist changes, then return that read. A restart of the same
+    /// track does not change them, so the wait is capped.
+    /// </summary>
+    private async Task<MediaSnapshot> ReadAfterTrackChange(MediaSnapshot before)
+    {
+        var deadline = Environment.TickCount64 + 400;
+        var snapshot = await ReadAsync();
+        while (Environment.TickCount64 < deadline && SameTrack(before, snapshot))
+        {
+            await Task.Delay(40);
+            snapshot = await ReadAsync();
+        }
+        return snapshot;
+    }
+
+    private static bool SameTrack(MediaSnapshot previous, MediaSnapshot next)
+        => previous.Title == next.Title && previous.Artist == next.Artist;
 
     private MediaSnapshot Run(Func<Task<MediaSnapshot>> action)
     {
@@ -215,12 +262,14 @@ public sealed class SmtcMediaController : IMediaController, IDisposable
 
     private async Task<GlobalSystemMediaTransportControlsSession?> SessionAsync()
     {
+        if (Volatile.Read(ref _disposed) == 1) return null;
         var manager = _manager;
         if (manager is null)
         {
             manager = await GlobalSystemMediaTransportControlsSessionManager.RequestAsync();
             lock (_gate)
             {
+                if (Volatile.Read(ref _disposed) == 1) return null;
                 if (_manager is null)
                 {
                     _manager = manager;
@@ -286,6 +335,7 @@ public sealed class SmtcMediaController : IMediaController, IDisposable
     {
         lock (_gate)
         {
+            if (Volatile.Read(ref _disposed) == 1) return;
             if (ReferenceEquals(_session, session)) return;
             Unhook(_session);
             _session = session;
@@ -313,10 +363,32 @@ public sealed class SmtcMediaController : IMediaController, IDisposable
         => PublishExternal();
 
     private int _publishing;
+    private int _deferredPublish;
 
     private void PublishExternal()
     {
-        if (Environment.TickCount64 < _quietUntil) return;
+        if (Volatile.Read(ref _disposed) == 1) return;
+        var now = Environment.TickCount64;
+        if (now < _quietUntil)
+        {
+            // The skip's metadata event arrives inside the quiet window. Dropping it left the
+            // phone on the previous track; read once more when the window ends.
+            if (Interlocked.Exchange(ref _deferredPublish, 1) == 1) return;
+            var waitMs = (int)Math.Clamp(_quietUntil - now + 30, 30, 2_000);
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(waitMs);
+                }
+                finally
+                {
+                    Interlocked.Exchange(ref _deferredPublish, 0);
+                }
+                PublishExternal();
+            });
+            return;
+        }
         if (Interlocked.Exchange(ref _publishing, 1) == 1) return;
         _ = Task.Run(async () =>
         {

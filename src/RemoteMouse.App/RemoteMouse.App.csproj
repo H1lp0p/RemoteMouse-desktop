@@ -11,6 +11,7 @@
     <RootNamespace>RemoteMouse.App</RootNamespace>
     <AssemblyName>RemoteMouse</AssemblyName>
     <ApplicationTitle>Remote Mouse</ApplicationTitle>
+    <ApplicationIcon>Assets\RemoteMouse.ico</ApplicationIcon>
     <NoWarn>CA1416</NoWarn>
   </PropertyGroup>
   <ItemGroup>

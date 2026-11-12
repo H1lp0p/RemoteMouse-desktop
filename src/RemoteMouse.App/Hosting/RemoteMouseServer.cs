@@ -28,7 +28,7 @@ public sealed class RemoteMouseServer : IAsyncDisposable
 {
     public const int Port = 12345;
     public const int RealtimePort = 12346;
-    public const int MaxClients = 5;
+    public const int MaxClients = 1;
     public const string Version = "1.0.0";
 
     private readonly StateStore _store;

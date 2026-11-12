@@ -65,6 +65,16 @@ public partial class App : Application
         };
         var menu = new WinForms.ContextMenuStrip();
         menu.Items.Add("Open", null, (_, _) => ShowFlyout());
+        var startup = new WinForms.ToolStripMenuItem("Start with Windows")
+        {
+            Checked = WindowsStartup.IsEnabled()
+        };
+        startup.Click += (_, _) =>
+        {
+            WindowsStartup.Set(!WindowsStartup.IsEnabled());
+            startup.Checked = WindowsStartup.IsEnabled();
+        };
+        menu.Items.Add(startup);
         menu.Items.Add("Exit", null, (_, _) => Shutdown());
         _tray.ContextMenuStrip = menu;
         _tray.MouseClick += (_, args) =>
@@ -86,17 +96,28 @@ public partial class App : Application
         ShowFlyout();
     }
 
-    protected override async void OnExit(ExitEventArgs e)
+    protected override void OnExit(ExitEventArgs e)
     {
+        // Drop the SMTC subscription before anything awaits. async OnExit returns at the
+        // first await, and the process then exits with the browser session still attached.
+        _media?.Dispose();
+        _text?.Dispose();
         if (_tray is not null)
         {
             _tray.Visible = false;
             _tray.Dispose();
         }
         if (_server is not null)
-            await _server.DisposeAsync();
-        _text?.Dispose();
-        _media?.Dispose();
+        {
+            try
+            {
+                Task.Run(() => _server.DisposeAsync().AsTask()).GetAwaiter().GetResult();
+            }
+            catch
+            {
+                // Shutdown already won the race with a socket close.
+            }
+        }
         _mouse?.Dispose();
         _volume?.Dispose();
         if (_mutex is not null)
